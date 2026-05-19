@@ -913,6 +913,24 @@ const PATCH = (function() {
     return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  function getJpegDimensions(b64) {
+    try {
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      for (let i = 0; i < bytes.length - 9; i++) {
+        if (bytes[i] === 0xFF) {
+          const m = bytes[i + 1];
+          if ((m >= 0xC0 && m <= 0xC3) || (m >= 0xC5 && m <= 0xC7) ||
+              (m >= 0xC9 && m <= 0xCB) || (m >= 0xCD && m <= 0xCF)) {
+            const h = (bytes[i + 5] << 8) | bytes[i + 6];
+            const w = (bytes[i + 7] << 8) | bytes[i + 8];
+            if (w > 0 && h > 0) return { w, h };
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function replaceContactInfo(xmlStr, managerName, phone, email) {
     const e = escapeXml;
     // 템플릿: "010" + "2361 1523" 으로 분리 저장됨
@@ -944,8 +962,23 @@ const PATCH = (function() {
     }
     s = s.replace(/<a:t>2026\.05\.12<\/a:t>/g, `<a:t>${e(_availDate)}</a:t>`);
 
-    // 회의실 크레딧
-    s = s.replace(/<a:t>월 \d+크레딧 무상제공 <\/a:t>/g, `<a:t>월 ${e(roomData.회의실크레딧)}크레딧 무상제공 </a:t>`);
+    // 회의실 크레딧 (bold 적용 - </a:rPr> 경계를 넘지 않는 안전한 패턴)
+    {
+      const creditText = `월 ${e(roomData.회의실크레딧)}크레딧 무상제공 `;
+      s = s.replace(
+        /<a:r>(<a:rPr\b[^>]*)(>(?:(?!<\/a:rPr>)[\s\S])*?<\/a:rPr>)<a:t>월 \d+크레딧 무상제공 <\/a:t><\/a:r>/g,
+        (match, rprOpen, rprRest) => {
+          const boldOpen = rprOpen.includes(' b=')
+            ? rprOpen.replace(/ b="[^"]*"/, ' b="1"')
+            : rprOpen + ' b="1"';
+          return `<a:r>${boldOpen}${rprRest}<a:t>${creditText}</a:t></a:r>`;
+        }
+      );
+      // fallback: run 구조가 달라 매칭 안 된 경우 텍스트만 교체
+      if (s.indexOf(creditText) === -1) {
+        s = s.replace(/<a:t>월 \d+크레딧 무상제공 <\/a:t>/g, `<a:t>${creditText}</a:t>`);
+      }
+    }
     
     // 금액 섹션
     s = s.replace(/<a:t>금액 \(VAT 별도\)<\/a:t>/g, '<a:t>금액</a:t>');
@@ -953,6 +986,8 @@ const PATCH = (function() {
     const rn = '<a:rPr lang="ko-KR" altLang="en-US" sz="1000" dirty="0"><a:latin typeface="Pretendard"/><a:ea typeface="Pretendard"/><a:cs typeface="Pretendard"/></a:rPr>';
     const rl = '<a:rPr lang="ko-KR" altLang="en-US" sz="1000" b="1" dirty="0"><a:latin typeface="Pretendard"/><a:ea typeface="Pretendard"/><a:cs typeface="Pretendard"/></a:rPr>';
     const rr = '<a:rPr lang="ko-KR" altLang="en-US" sz="1000" b="1" dirty="0"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:latin typeface="Pretendard ExtraBold"/><a:ea typeface="Pretendard ExtraBold"/><a:cs typeface="Pretendard ExtraBold"/></a:rPr>';
+    const ry = '<a:rPr lang="ko-KR" altLang="en-US" sz="1000" b="1" dirty="0"><a:highlight><a:srgbClr val="FFFF00"/></a:highlight><a:latin typeface="Pretendard ExtraBold"/><a:ea typeface="Pretendard ExtraBold"/><a:cs typeface="Pretendard ExtraBold"/></a:rPr>';
+    const rry = '<a:rPr lang="ko-KR" altLang="en-US" sz="1000" b="1" dirty="0"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:highlight><a:srgbClr val="FFFF00"/></a:highlight><a:latin typeface="Pretendard ExtraBold"/><a:ea typeface="Pretendard ExtraBold"/><a:cs typeface="Pretendard ExtraBold"/></a:rPr>';
     
     const RH = 370000, Y0 = 4647723;
     const row = (i1, i2, y, lb, vl, lr, vr) => 
@@ -967,12 +1002,12 @@ const PATCH = (function() {
       const dl = roomData.단기예치금옵션 === '면제' ? '예치금 (총 이용료 납부로 면제)' : '예치금';
       const dv = roomData.단기예치금옵션 === '면제' ? '면제' : `${e(roomData.예치금)}원`;
       rows += row(29, 30, Y0, dl, dv, rl, rr);
-      rows += row(31, 32, Y0 + RH, '단기 프로모션 적용가 (VAT 별도)', `${e(roomData.단기프로모션 || '')}원`, rl, rr);
+      rows += row(31, 32, Y0 + RH, '단기 프로모션 적용가 (VAT 별도)', `${e(roomData.단기프로모션 || '')}원`, ry, rr);
     } else {
       rows += row(29, 30, Y0, '예치금', `${e(roomData.예치금)}원`, rl, rr);
       rows += row(31, 32, Y0 + RH, '표준서비스이용료 (VAT 별도)', `${e(roomData.표준서비스이용료)}원`, rn, rn);
-      if (p6) rows += row(50, 51, Y0 + RH * 2, '월 프로모션 적용가 (6개월, VAT 별도)', `${e(p6)}원`, rl, rr);
-      if (p12) rows += row(52, 53, p6 ? Y0 + RH * 3 : Y0 + RH * 2, '월 프로모션 적용가 (12개월, VAT 별도)', `${e(p12)}원`, rl, rr);
+      if (p6) rows += row(50, 51, Y0 + RH * 2, '월 프로모션 적용가 (6개월, VAT 별도)', `${e(p6)}원`, ry, rry);
+      if (p12) rows += row(52, 53, p6 ? Y0 + RH * 3 : Y0 + RH * 2, '월 프로모션 적용가 (12개월, VAT 별도)', `${e(p12)}원`, ry, rry);
     }
     
     const mk = '%%%P%%%';
@@ -983,6 +1018,28 @@ const PATCH = (function() {
     
     if (!roomData.photoData) {
       s = s.replace(/<p:pic>[\s\S]*?<\/p:pic>/g, '');
+    } else {
+      const dims = getJpegDimensions(roomData.photoData);
+      if (dims) {
+        const BOX_X = 6824402, BOX_Y = 1440000, BOX_W = 4923086, BOX_H = 4257804;
+        const ratio = dims.w / dims.h;
+        let newCx, newCy, newX, newY;
+        if (ratio >= BOX_W / BOX_H) {
+          newCx = BOX_W;
+          newCy = Math.round(BOX_W / ratio);
+          newX = BOX_X;
+          newY = BOX_Y + Math.round((BOX_H - newCy) / 2);
+        } else {
+          newCy = BOX_H;
+          newCx = Math.round(BOX_H * ratio);
+          newX = BOX_X + Math.round((BOX_W - newCx) / 2);
+          newY = BOX_Y;
+        }
+        s = s.replace(/(<p:pic>[\s\S]*?<a:off x=")(\d+)(" y=")(\d+)("[\s\S]*?<\/p:pic>)/,
+          (m, a, _x, b, _y, c) => a + newX + b + newY + c);
+        s = s.replace(/(<p:pic>[\s\S]*?<a:ext cx=")(\d+)(" cy=")(\d+)("[\s\S]*?<\/p:pic>)/,
+          (m, a, _w, b, _h, c) => a + newCx + b + newCy + c);
+      }
     }
     
     return s;
