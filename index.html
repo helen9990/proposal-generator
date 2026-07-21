@@ -1324,22 +1324,35 @@ const SIMPLE = (() => {
 
     xml = xml.replace('<a:t>4.56평</a:t>', '<a:t>'+ex(d.면적평수?d.면적평수+'평':'-')+'</a:t>');
     xml = xml.replace('<a:t>월 18크레딧 무상제공 </a:t>', '<a:t>월 '+ex(d.회의실크레딧||'?')+'크레딧 무상제공 </a:t>');
+
+    // 금액 placeholder 4개(예치금/표준/6개월/12개월)는 전부 "숫자,숫자,숫자원" 형태라
+    // 사용자가 입력한 실제 금액이 다른 placeholder의 더미 텍스트와 우연히 같아지면
+    // (예: 예치금을 8,500,000원으로 입력 → 표준서비스이용료 placeholder와 충돌) 서로 뒤섞일 수 있다.
+    // 실제 값 대입 전 고유 마커로 먼저 치환해두면 이후 어떤 값이 들어와도 절대 겹치지 않는다.
+    xml = xml.replace('<a:t>17,000,000원</a:t>', '<a:t>DEP</a:t>');
+    xml = xml.replace('<a:t>8,500,000원</a:t>', '<a:t>STD</a:t>');
+    xml = xml.replace('<a:t>2,200,000원</a:t>', '<a:t>P6</a:t>');
+    xml = xml.replace('<a:t>1,100,000원</a:t>', '<a:t>P12</a:t>');
+
     const depAmt = (d.단기여부 && d.단기예치금옵션 === '면제') ? '면제' : fmtAmt(d.단기여부 ? (d.단기_예치금 || d.예치금) : d.예치금);
-    xml = xml.replace('<a:t>17,000,000원</a:t>', '<a:t>'+ex(depAmt)+'</a:t>');
+    xml = xml.replace('<a:t>DEP</a:t>', '<a:t>'+ex(depAmt)+'</a:t>');
+
     if (d.단기여부) {
       const rmSp = (x,t) => { const i=x.indexOf(t); if(i<0)return x; const s=x.lastIndexOf('<p:sp>',i),e=x.indexOf('</p:sp>',i)+'</p:sp>'.length; return x.slice(0,s)+x.slice(e); };
       xml = rmSp(xml, '표준서비스이용료 (VAT 별도)');
-      xml = rmSp(xml, '8,500,000원');
+      xml = rmSp(xml, 'STD');
       xml = xml.replace('<a:t>월 프로모션 적용가 (6개월, VAT 별도)</a:t>', '<a:t>단기 프로모션 적용가 (VAT 별도)</a:t>');
-      xml = xml.replace('<a:t>2,200,000원</a:t>', '<a:t>'+ex(fmtAmt(d.단기프로모션))+'</a:t>');
+      xml = xml.replace('<a:t>P6</a:t>', '<a:t>'+ex(fmtAmt(d.단기프로모션))+'</a:t>');
       xml = xml.replace('x="502920" y="9502445"', 'x="502920" y="9182405"');
       xml = xml.replace('x="2926080" y="9502445"', 'x="2926080" y="9182405"');
       xml = rmSp(xml, '월 프로모션 적용가 (12개월, VAT 별도)');
-      xml = rmSp(xml, '1,100,000원');
+      xml = rmSp(xml, 'P12');
     } else {
-      xml = xml.replace('<a:t>8,500,000원</a:t>', '<a:t>'+ex(fmtAmt(d.표준서비스이용료))+'</a:t>');
-      xml = xml.replace('<a:t>2,200,000원</a:t>', '<a:t>'+ex(fmtAmt(d.프로모션6개월))+'</a:t>');
-      xml = xml.replace('<a:t>1,100,000원</a:t>', '<a:t>'+ex(fmtAmt(d.프로모션12개월))+'</a:t>');
+      xml = xml.replace(/<a:t>(STD|P6|P12)<\/a:t>/g, (m, tag) => {
+        if (tag === 'STD') return '<a:t>'+ex(fmtAmt(d.표준서비스이용료))+'</a:t>';
+        if (tag === 'P6') return '<a:t>'+ex(fmtAmt(d.프로모션6개월))+'</a:t>';
+        return '<a:t>'+ex(fmtAmt(d.프로모션12개월))+'</a:t>';
+      });
     }
 
     if (!d.photoData) {
